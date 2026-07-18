@@ -12,9 +12,11 @@ The assistant answers strictly from retrieved passages in the source documents (
 - The edge function calls LlamaCloud's pipeline chat endpoint (`POST /api/v1/pipelines/{pipeline_id}/chat`), which does retrieval + LLM generation server-side against the already-indexed document set (model: `CLAUDE_4_5_SONNET`, via LlamaCloud's own model integration — no separate Anthropic/OpenAI key needed here).
 - That endpoint streams the [Vercel AI SDK "data stream protocol"](https://ai-sdk.dev) (`0:"text chunk"` for tokens, `8:[{"type":"sources","data":{"nodes":[...]}}]` for the retrieved-node metadata used as citations). The edge function parses that and re-emits a simpler NDJSON stream (`{type:"delta"|"citations"|"error"}`) that the frontend consumes.
 
-## ⚠️ Deprecated endpoint
+## ⚠️ Deprecated endpoint (deliberately not migrated)
 
-`POST /pipelines/{pipeline_id}/chat` is currently marked `deprecated` in LlamaCloud's OpenAPI spec, in favor of a newer session-based chat API (`POST /chat` to create a session, then `POST /chat/{session_id}/messages/stream`). It still works as of this writing and was chosen here because it takes the `pipeline_id` we already have directly, with no separate session/index-lookup step. If LlamaIndex sunsets it, migrate to the session API — that one wants `index_id` + `project_id`/`organization_id` instead of `pipeline_id`.
+`POST /pipelines/{pipeline_id}/chat` is marked `deprecated` in LlamaCloud's OpenAPI spec, in favor of a newer session-based chat API (`POST /chat` to create a session, then `POST /chat/{session_id}/messages/stream`). We tried migrating and hit a dead end: the new API expects an `index_id` from a separate "Indexes"/agent-data product surface, and this pipeline's ID isn't recognized there — a live test returned `{"detail":"Export config <pipeline_id> not found in project."}` even though the dashboard displays the same UUID as both "Pipeline ID" and "Index ID". So the two chat APIs aren't interchangeable for this project as currently set up; migrating for real would mean finding or creating an actual index under that newer surface, not just swapping endpoints.
+
+Staying on the deprecated endpoint is a deliberate choice, not an oversight. It still works. If LlamaIndex sunsets it, that's the point to revisit whether this project has (or needs) a proper index under the newer chat API.
 
 ## Setup
 
