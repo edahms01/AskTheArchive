@@ -1,0 +1,6 @@
+{
+  "name": "ask-the-archive",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AskTheArchive — chat interface for the declassified Election Integrity document release, backed by LlamaCloud retrieval + chat."
+}
