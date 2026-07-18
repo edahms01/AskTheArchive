@@ -4,13 +4,17 @@ A chat interface for the declassified Election Integrity document release: vulne
 
 Static `index.html` + a single Netlify Edge Function (`netlify/edge-functions/ask.js`), no build step, no framework — same pattern as this site's sibling project, AskFrankie.
 
-The assistant answers strictly from retrieved passages in the source documents (a neutral document-analyst persona, not a political voice), and surfaces the source filename for each answer as a citation chip.
+The assistant answers strictly from retrieved passages in the source documents (a neutral document-analyst persona, not a political voice).
 
 ## How it works
 
 - The frontend posts `{ query, history }` to `/.netlify/functions/ask`.
 - The edge function calls LlamaCloud's pipeline chat endpoint (`POST /api/v1/pipelines/{pipeline_id}/chat`), which does retrieval + LLM generation server-side against the already-indexed document set (model: `CLAUDE_4_5_SONNET`, via LlamaCloud's own model integration — no separate Anthropic/OpenAI key needed here).
-- That endpoint streams the [Vercel AI SDK "data stream protocol"](https://ai-sdk.dev) (`0:"text chunk"` for tokens, `8:[{"type":"sources","data":{"nodes":[...]}}]` for the retrieved-node metadata used as citations). The edge function parses that and re-emits a simpler NDJSON stream (`{type:"delta"|"citations"|"error"}`) that the frontend consumes.
+- That endpoint streams the [Vercel AI SDK "data stream protocol"](https://ai-sdk.dev) (`0:"text chunk"` for tokens). The edge function parses that and re-emits a simpler NDJSON stream (`{type:"delta"|"error"}`) that the frontend consumes.
+
+## No per-answer citations (deliberate)
+
+The retrieve/chat responses do include a `8:[{"type":"sources","data":{"nodes":[...]}}]` annotation with retrieved-chunk metadata, and an earlier version of this app rendered `file_name` from that as a citation chip. Dropped it: several of the source PDFs were indexed via the combined `Merged_Declassified_Documents.pdf` rather than their individual per-topic files, so `file_name` was often just "Merged_Declassified_Documents" — not useful as a citation. Re-adding real per-report citations would mean re-indexing from the individual files instead of the merged one.
 
 ## ⚠️ Deprecated endpoint (deliberately not migrated)
 

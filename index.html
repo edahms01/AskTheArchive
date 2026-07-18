@@ -74,10 +74,6 @@ html,body{height:100%;margin:0;background:#0a1428}
 .aa-bubble-bot ul.aa-md-ul li{margin-bottom:4px}
 .aa-bubble-user{background:rgba(201,162,39,0.08);color:var(--text);border-radius:12px;padding:9px 13px;font-size:14.5px;line-height:1.55;white-space:pre-wrap}
 
-.aa-cite-wrap{display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}
-.aa-cite{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--dim);font-size:12px;font-weight:500;padding:5px 10px;border-radius:999px;font-family:var(--sys);line-height:1;cursor:default}
-.aa-cite-icon{color:var(--accent);font-size:9px}
-
 .aa-chips{display:flex;flex-direction:column;gap:9px;margin-top:4px;align-items:flex-start}
 .aa-chip{background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:13.5px;padding:11px 15px;border-radius:10px;cursor:pointer;font-family:var(--sys);text-align:left;line-height:1.35;min-height:44px;transition:all .15s;max-width:100%}
 .aa-chip:hover{border-color:var(--accent);background:var(--surface2)}
@@ -150,7 +146,7 @@ html,body{height:100%;margin:0;background:#0a1428}
 (function () {
   'use strict';
 
-  var WELCOME_TEXT = "This archive searches the declassified Election Integrity document release — records on voting-system vulnerabilities, the acquisition of American voter data, the Michigan voter-registration investigation, and noncitizens on state voter rolls. Ask a question and I'll pull relevant passages from the source documents, with citations to the underlying file.";
+  var WELCOME_TEXT = "This archive searches the declassified Election Integrity document release — records on voting-system vulnerabilities, the acquisition of American voter data, the Michigan voter-registration investigation, and noncitizens on state voter rolls. Ask a question and I'll pull relevant passages from the source documents.";
   var SUGGESTIONS = [
     "What vulnerabilities were found in electronic voting systems?",
     "What did the Michigan investigation find?",
@@ -163,7 +159,7 @@ html,body{height:100%;margin:0;background:#0a1428}
     started: false,
     thinking: false,
     input: '',
-    messages: [] // {role:'user'|'bot', text, citations:[{label}]}
+    messages: [] // {role:'user'|'bot', text}
   };
 
   var bannerWrap = document.getElementById('bannerWrap');
@@ -262,7 +258,7 @@ html,body{height:100%;margin:0;background:#0a1428}
   function renderThread() {
     aaThread.innerHTML = '';
 
-    var all = [{ role: 'bot', text: WELCOME_TEXT, citations: [] }].concat(state.messages);
+    var all = [{ role: 'bot', text: WELCOME_TEXT }].concat(state.messages);
 
     all.forEach(function (m) {
       var row = el('div', 'aa-row' + (m.role === 'user' ? ' aa-user' : ''));
@@ -273,19 +269,6 @@ html,body{height:100%;margin:0;background:#0a1428}
       var bubble = el('div', m.role === 'bot' ? 'aa-bubble-bot' : 'aa-bubble-user');
       bubble.innerHTML = mdToHtml(m.text);
       col.appendChild(bubble);
-
-      if (m.role === 'bot' && m.citations && m.citations.length) {
-        var citeWrap = el('div', 'aa-cite-wrap');
-        m.citations.forEach(function (c) {
-          var cite = el('button', 'aa-cite');
-          var icon = el('span', 'aa-cite-icon');
-          icon.innerHTML = '&#9656;';
-          cite.appendChild(icon);
-          cite.appendChild(document.createTextNode(c.label));
-          citeWrap.appendChild(cite);
-        });
-        col.appendChild(citeWrap);
-      }
 
       row.appendChild(col);
       aaThread.appendChild(row);
@@ -331,16 +314,15 @@ html,body{height:100%;margin:0;background:#0a1428}
     state.input = '';
     aaInput.value = '';
     aaInput.style.height = 'auto';
-    state.messages.push({ role: 'user', text: text, citations: [] });
+    state.messages.push({ role: 'user', text: text });
 
-    var botMsg = { role: 'bot', text: '', citations: [] };
+    var botMsg = { role: 'bot', text: '' };
     state.messages.push(botMsg);
 
     state.thinking = true;
     render();
 
     var bubbleEl = null;
-    var colEl = null;
     var firstChunkSeen = false;
 
     function attachBubbleRefs() {
@@ -348,7 +330,6 @@ html,body{height:100%;margin:0;background:#0a1428}
       var row = rows[rows.length - 1];
       if (!row) return;
       bubbleEl = row.querySelector('.aa-bubble-bot');
-      colEl = row.querySelector('.aa-col');
     }
 
     function handleFirstChunk() {
@@ -357,20 +338,6 @@ html,body{height:100%;margin:0;background:#0a1428}
       state.thinking = false;
       render();
       attachBubbleRefs();
-    }
-
-    function renderCitations(cites) {
-      if (!colEl || !cites || !cites.length) return;
-      var citeWrap = el('div', 'aa-cite-wrap');
-      cites.forEach(function (c) {
-        var cite = el('button', 'aa-cite');
-        var icon = el('span', 'aa-cite-icon');
-        icon.innerHTML = '&#9656;';
-        cite.appendChild(icon);
-        cite.appendChild(document.createTextNode(c.label));
-        citeWrap.appendChild(cite);
-      });
-      colEl.appendChild(citeWrap);
     }
 
     try {
@@ -406,21 +373,15 @@ html,body{height:100%;margin:0;background:#0a1428}
             botMsg.text += parsed.text;
             if (bubbleEl) bubbleEl.innerHTML = mdToHtml(botMsg.text);
             aaScroll.scrollTop = aaScroll.scrollHeight;
-          } else if (parsed.type === 'citations') {
-            handleFirstChunk();
-            botMsg.citations = parsed.citations || [];
-            renderCitations(botMsg.citations);
           } else if (parsed.type === 'error') {
             handleFirstChunk();
             botMsg.text = FALLBACK_TEXT;
-            botMsg.citations = [];
             if (bubbleEl) bubbleEl.innerHTML = mdToHtml(botMsg.text);
           }
         }
       }
     } catch (err) {
       botMsg.text = FALLBACK_TEXT;
-      botMsg.citations = [];
     } finally {
       state.thinking = false;
       render();

@@ -18,7 +18,6 @@ const RERANK = true;
 const RERANK_TOP_N = 6;
 
 const HISTORY_TURNS = 4;
-const MAX_CITATIONS = 4;
 
 const FALLBACK_ANSWER = 'The archive service is temporarily unavailable. Please try again in a moment.';
 
@@ -76,8 +75,7 @@ export default async (request, context) => {
             model_name: MODEL,
             system_prompt: SYSTEM_PROMPT,
             temperature: TEMPERATURE,
-            // The model's own inline [citation:uuid] tags aren't rendered by this UI —
-            // we build citation chips separately from the "sources" stream annotation.
+            // Keep off: the model's inline [citation:uuid] tags aren't rendered by this UI.
             use_citation: false,
           },
         },
@@ -93,24 +91,12 @@ export default async (request, context) => {
 
   // LlamaCloud's pipeline chat endpoint streams the Vercel AI SDK "data stream protocol":
   // each line is `<prefix>:<jsonValue>`. `0` = text delta (JSON string), `8` = message
-  // annotations (JSON array; we look for a {type:"sources", data:{nodes:[...]}} entry
-  // carrying the retrieved chunks used for citations), `3` = error, `d`/`e` = finish parts.
+  // annotations (source-node metadata — unused here, see README on the merged-PDF
+  // citation problem), `3` = error, `d`/`e` = finish parts.
   const stream = new ReadableStream({
     async start(controller) {
       let gotDelta = false;
       let finishReason = null;
-      const seen = {};
-      const citations = [];
-
-      function addCitationsFromNodes(nodes) {
-        (nodes || []).forEach((n) => {
-          const meta = n && n.metadata;
-          const fileName = meta && meta.file_name;
-          if (!fileName || seen[fileName]) return;
-          seen[fileName] = true;
-          citations.push({ label: fileName.replace(/\.pdf$/i, '') });
-        });
-      }
 
       try {
         const reader = chatRes.body.getReader();
@@ -143,19 +129,6 @@ export default async (request, context) => {
               if (typeof text !== 'string' || !text) continue;
               gotDelta = true;
               controller.enqueue(encoder.encode(JSON.stringify({ type: 'delta', text }) + '\n'));
-            } else if (prefix === '8') {
-              let parts;
-              try {
-                parts = JSON.parse(rest);
-              } catch {
-                continue;
-              }
-              if (!Array.isArray(parts)) continue;
-              parts.forEach((p) => {
-                if (p && p.type === 'sources' && p.data && Array.isArray(p.data.nodes)) {
-                  addCitationsFromNodes(p.data.nodes);
-                }
-              });
             } else if (prefix === '3') {
               let msg;
               try {
@@ -180,9 +153,6 @@ export default async (request, context) => {
         } else if (finishReason === 'length') {
           controller.enqueue(encoder.encode(JSON.stringify({ type: 'delta', text: '…' }) + '\n'));
         }
-
-        const finalCitations = citations.slice(0, MAX_CITATIONS);
-        controller.enqueue(encoder.encode(JSON.stringify({ type: 'citations', citations: finalCitations }) + '\n'));
       } catch (err) {
         controller.enqueue(encoder.encode(JSON.stringify({ type: 'error', error: `LlamaCloud stream failed: ${err.message}` }) + '\n'));
       } finally {
