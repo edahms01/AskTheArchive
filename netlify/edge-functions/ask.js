@@ -76,7 +76,9 @@ export default async (request, context) => {
             model_name: MODEL,
             system_prompt: SYSTEM_PROMPT,
             temperature: TEMPERATURE,
-            use_citation: true,
+            // The model's own inline [citation:uuid] tags aren't rendered by this UI —
+            // we build citation chips separately from the "sources" stream annotation.
+            use_citation: false,
           },
         },
       }),
