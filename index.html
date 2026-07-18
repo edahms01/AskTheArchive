@@ -10,8 +10,6 @@
 html,body{height:100%;margin:0;background:#0a1428}
 *{box-sizing:border-box}
 
-@keyframes eiblink{0%,70%,100%{opacity:.25;transform:translateY(0)}35%{opacity:1;transform:translateY(-2px)}}
-
 .ei-app{position:relative;height:100vh;display:flex;flex-direction:column;background:#0a1428;overflow:hidden;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
 .ei-sky{position:fixed;inset:0;z-index:0;
   background:
@@ -80,10 +78,8 @@ html,body{height:100%;margin:0;background:#0a1428}
 .aa-chip:hover{border-color:var(--accent);background:var(--surface2)}
 
 .aa-think-row{display:flex;gap:13px;align-items:flex-start}
-.aa-think{display:inline-flex;gap:5px;align-items:center;padding-top:4px}
-.aa-think span{width:6px;height:6px;border-radius:50%;background:var(--dim);display:inline-block;animation:eiblink 1.3s infinite}
-.aa-think span:nth-child(2){animation-delay:.18s}
-.aa-think span:nth-child(3){animation-delay:.36s}
+.aa-think-text{font-size:14px;color:var(--dim);font-style:italic;padding-top:2px;animation:aa-think-pulse 1.6s ease-in-out infinite}
+@keyframes aa-think-pulse{0%,100%{opacity:.5}50%{opacity:1}}
 
 .aa-footer{flex:0 0 auto;padding:12px 14px;padding-bottom:calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:var(--bg)}
 .aa-input-wrap{display:flex;align-items:flex-end;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:6px 6px 6px 16px;max-width:720px;margin:0 auto;transition:max-width .4s ease}
@@ -232,6 +228,47 @@ html,body{height:100%;margin:0;background:#0a1428}
       var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
     }
     return a;
+  }
+
+  // LlamaCloud's chat endpoint buffers the whole answer server-side and delivers it
+  // in one burst rather than streaming token-by-token (confirmed by direct timing
+  // tests — see README), so the wait is a single opaque gap of ~15-20s. Cycling
+  // status phrases make that gap feel active instead of dead air.
+  var THINKING_PHRASES = [
+    "Searching the declassified archive…",
+    "Cross-referencing FBI records…",
+    "Reviewing redacted excerpts…",
+    "Checking CISA technical assessments…",
+    "Scanning voter registration files…",
+    "Consulting investigative memos…",
+    "Pulling relevant passages…",
+    "Reviewing intelligence community reports…",
+    "Verifying source documents…",
+    "Assembling the findings…"
+  ];
+  var thinkingIntervalId = null;
+
+  function startThinkingPhrases() {
+    stopThinkingPhrases();
+    var queue = shuffle(THINKING_PHRASES);
+    var idx = 0;
+    function apply() {
+      var node = aaThread.querySelector('.aa-think-text');
+      if (node) node.textContent = queue[idx];
+    }
+    apply();
+    thinkingIntervalId = setInterval(function () {
+      idx++;
+      if (idx >= queue.length) { queue = shuffle(THINKING_PHRASES); idx = 0; }
+      apply();
+    }, 1900);
+  }
+
+  function stopThinkingPhrases() {
+    if (thinkingIntervalId) {
+      clearInterval(thinkingIntervalId);
+      thinkingIntervalId = null;
+    }
   }
 
   // 2 follow-ups from the category the exchange was about, 1 from a different category.
@@ -412,11 +449,7 @@ html,body{height:100%;margin:0;background:#0a1428}
     if (state.thinking) {
       var trow = el('div', 'aa-think-row');
       trow.appendChild(el('div', 'aa-dot'));
-      var think = el('div', 'aa-think');
-      think.appendChild(el('span'));
-      think.appendChild(el('span'));
-      think.appendChild(el('span'));
-      trow.appendChild(think);
+      trow.appendChild(el('div', 'aa-think-text', 'Thinking…'));
       aaThread.appendChild(trow);
     }
 
@@ -447,6 +480,7 @@ html,body{height:100%;margin:0;background:#0a1428}
 
     state.thinking = true;
     render();
+    startThinkingPhrases();
 
     var bubbleEl = null;
     var firstChunkSeen = false;
@@ -461,6 +495,7 @@ html,body{height:100%;margin:0;background:#0a1428}
     function handleFirstChunk() {
       if (firstChunkSeen) return;
       firstChunkSeen = true;
+      stopThinkingPhrases();
       state.thinking = false;
       render();
       attachBubbleRefs();
@@ -511,6 +546,7 @@ html,body{height:100%;margin:0;background:#0a1428}
       hadError = true;
       botMsg.text = FALLBACK_TEXT;
     } finally {
+      stopThinkingPhrases();
       if (!hadError && botMsg.text) {
         botMsg.followups = pickFollowups(text, botMsg.text);
       }
