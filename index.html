@@ -179,6 +179,92 @@ html,body{height:100%;margin:0;background:#0a1428}
     "What's the finding on noncitizens on voter rolls?"
   ];
 
+  // Curated per-category question banks for post-answer follow-up pills, rather
+  // than asking the LLM to invent them inline — keeps suggestions reliably on
+  // topic and avoids an extra model call after every answer.
+  var CATEGORIES = [
+    {
+      key: 'voting',
+      keywords: ['voting machine', 'ballot', 'dre machine', 'tabulat', 'pollbook', 'poll book', 'imagecast', 'defcon', 'electronic voting', 'voting system', 'ballot-counting', 'ballot counting', 'voting equipment'],
+      questions: [
+        "What vulnerabilities were found in electronic voting systems?",
+        "How were ballot marking devices compromised?",
+        "What weaknesses did CISA find in election networks?",
+        "How could vote tabulation systems be manipulated?"
+      ]
+    },
+    {
+      key: 'chinaVoterData',
+      keywords: ['china', 'chinese', 'beijing', 'prc', 'foreign acquisition'],
+      questions: [
+        "How did China acquire American voter data?",
+        "What voter data did foreign actors target?",
+        "Which states were affected by the voter data acquisition?",
+        "What was the scale of the voter data exposure?"
+      ]
+    },
+    {
+      key: 'michigan',
+      keywords: ['michigan', 'southfield', 'canvasser'],
+      questions: [
+        "What did the Michigan investigation find?",
+        "Who were the subjects of the Michigan voter-registration investigation?",
+        "How were voters registered without their consent in Michigan?",
+        "What was the FBI's role in the Michigan investigation?"
+      ]
+    },
+    {
+      key: 'noncitizens',
+      keywords: ['noncitizen', 'non-citizen', 'alien', 'citizenship', 'naturaliz'],
+      questions: [
+        "What's the finding on noncitizens on voter rolls?",
+        "How many noncitizens were found on state voter rolls?",
+        "Which states were examined for noncitizen registration?",
+        "How are noncitizen registrations typically discovered?"
+      ]
+    }
+  ];
+
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  // 2 follow-ups from the category the exchange was about, 1 from a different category.
+  function pickFollowups(userQuestion, answerText) {
+    var combined = (userQuestion + ' ' + answerText).toLowerCase();
+    var scores = CATEGORIES.map(function (cat) {
+      var score = 0;
+      cat.keywords.forEach(function (kw) {
+        if (combined.indexOf(kw) !== -1) score++;
+      });
+      return score;
+    });
+    var bestIdx = 0;
+    for (var i = 1; i < scores.length; i++) {
+      if (scores[i] > scores[bestIdx]) bestIdx = i;
+    }
+    if (scores[bestIdx] === 0) {
+      bestIdx = (userQuestion.length + answerText.length) % CATEGORIES.length;
+    }
+
+    var current = CATEGORIES[bestIdx];
+    var userQLower = userQuestion.trim().toLowerCase();
+    var sameCategoryPicks = shuffle(current.questions.filter(function (q) {
+      return q.toLowerCase() !== userQLower;
+    })).slice(0, 2);
+
+    var otherCategories = CATEGORIES.filter(function (c) { return c.key !== current.key; });
+    var otherCategory = otherCategories[Math.floor(Math.random() * otherCategories.length)];
+    var otherPick = otherCategory.questions[Math.floor(Math.random() * otherCategory.questions.length)];
+
+    return shuffle(sameCategoryPicks.concat([otherPick]));
+  }
+
   var state = {
     expanded: false,
     started: false,
@@ -307,6 +393,20 @@ html,body{height:100%;margin:0;background:#0a1428}
         chipsWrap.appendChild(chip);
       });
       aaThread.appendChild(chipsWrap);
+    } else if (!state.thinking) {
+      var lastBotMsg = null;
+      for (var bi = state.messages.length - 1; bi >= 0; bi--) {
+        if (state.messages[bi].role === 'bot') { lastBotMsg = state.messages[bi]; break; }
+      }
+      if (lastBotMsg && lastBotMsg.followups && lastBotMsg.followups.length) {
+        var followupWrap = el('div', 'aa-chips');
+        lastBotMsg.followups.forEach(function (s) {
+          var chip = el('button', 'aa-chip', s);
+          chip.addEventListener('click', function () { send(s); });
+          followupWrap.appendChild(chip);
+        });
+        aaThread.appendChild(followupWrap);
+      }
     }
 
     if (state.thinking) {
@@ -334,6 +434,7 @@ html,body{height:100%;margin:0;background:#0a1428}
     if (!text || state.thinking) return;
 
     var FALLBACK_TEXT = "Sorry — I'm having trouble reaching the document archive right now. Give it a moment and try again.";
+    var hadError = false;
 
     state.started = true;
     state.input = '';
@@ -400,14 +501,19 @@ html,body{height:100%;margin:0;background:#0a1428}
             aaScroll.scrollTop = aaScroll.scrollHeight;
           } else if (parsed.type === 'error') {
             handleFirstChunk();
+            hadError = true;
             botMsg.text = FALLBACK_TEXT;
             if (bubbleEl) bubbleEl.innerHTML = mdToHtml(botMsg.text);
           }
         }
       }
     } catch (err) {
+      hadError = true;
       botMsg.text = FALLBACK_TEXT;
     } finally {
+      if (!hadError && botMsg.text) {
+        botMsg.followups = pickFollowups(text, botMsg.text);
+      }
       state.thinking = false;
       render();
     }
