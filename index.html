@@ -61,7 +61,17 @@ html,body{height:100%;margin:0;background:#0a1428}
 .aa-col{display:flex;flex-direction:column;gap:11px;max-width:90%}
 .aa-row.aa-user .aa-col{max-width:82%;align-items:flex-end;gap:8px}
 .aa-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:9px}
-.aa-bubble-bot{color:var(--text);font-size:15.5px;line-height:1.75;white-space:pre-wrap}
+.aa-bubble-bot{color:var(--text);font-size:15.5px;line-height:1.75}
+.aa-bubble-bot p{margin:0 0 12px}
+.aa-bubble-bot p:last-child{margin-bottom:0}
+.aa-bubble-bot h3.aa-md-h,.aa-bubble-bot h4.aa-md-h,.aa-bubble-bot h5.aa-md-h{font-family:var(--serif);font-weight:600;color:var(--text);line-height:1.3;margin:18px 0 8px}
+.aa-bubble-bot h3.aa-md-h{font-size:18px}
+.aa-bubble-bot h4.aa-md-h{font-size:16px}
+.aa-bubble-bot h5.aa-md-h{font-size:15px}
+.aa-bubble-bot>h3.aa-md-h:first-child,.aa-bubble-bot>h4.aa-md-h:first-child,.aa-bubble-bot>h5.aa-md-h:first-child{margin-top:0}
+.aa-bubble-bot ul.aa-md-ul{margin:0 0 12px;padding-left:20px}
+.aa-bubble-bot ul.aa-md-ul:last-child{margin-bottom:0}
+.aa-bubble-bot ul.aa-md-ul li{margin-bottom:4px}
 .aa-bubble-user{background:rgba(201,162,39,0.08);color:var(--text);border-radius:12px;padding:9px 13px;font-size:14.5px;line-height:1.55;white-space:pre-wrap}
 
 .aa-cite-wrap{display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}
@@ -173,13 +183,68 @@ html,body{height:100%;margin:0;background:#0a1428}
     return e;
   }
 
-  function mdToHtml(text) {
-    return text
+  function mdInline(s) {
+    return s
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/\*(.+?)\*/g, '<i>$1</i>');
+  }
+
+  // Minimal block-level markdown: paragraphs, #/##/### headings, and -/* bullet
+  // lists. The document-analyst persona reliably produces these; user chat
+  // bubbles are rendered as plain escaped text (no markdown), so this only
+  // runs on assistant messages.
+  function mdToHtml(raw) {
+    var text = raw
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-      .replace(/\*(.*?)\*/g, '<i>$1</i>');
+      .replace(/>/g, '&gt;');
+
+    var lines = text.split('\n');
+    var html = '';
+    var para = [];
+
+    function flushPara() {
+      if (para.length) {
+        html += '<p>' + para.map(mdInline).join('<br>') + '</p>';
+        para = [];
+      }
+    }
+
+    var i = 0;
+    while (i < lines.length) {
+      var trimmed = lines[i].trim();
+      var headingMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
+
+      if (headingMatch) {
+        flushPara();
+        var level = headingMatch[1].length + 2; // # -> h3, ## -> h4, ### -> h5
+        html += '<h' + level + ' class="aa-md-h">' + mdInline(headingMatch[2]) + '</h' + level + '>';
+        i++;
+        continue;
+      }
+
+      if (/^[-*]\s+/.test(trimmed)) {
+        flushPara();
+        var items = [];
+        while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+          items.push('<li>' + mdInline(lines[i].trim().replace(/^[-*]\s+/, '')) + '</li>');
+          i++;
+        }
+        html += '<ul class="aa-md-ul">' + items.join('') + '</ul>';
+        continue;
+      }
+
+      if (trimmed === '') {
+        flushPara();
+        i++;
+        continue;
+      }
+
+      para.push(lines[i]);
+      i++;
+    }
+    flushPara();
+    return html;
   }
 
   function renderExpand() {
