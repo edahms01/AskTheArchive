@@ -77,6 +77,21 @@ html,body{height:100%;margin:0;background:#0a1428}
 .aa-chip{background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:13.5px;padding:11px 15px;border-radius:10px;cursor:pointer;font-family:var(--sys);text-align:left;line-height:1.35;min-height:44px;transition:all .15s;max-width:100%}
 .aa-chip:hover{border-color:var(--accent);background:var(--surface2)}
 
+.aa-paths{display:flex;flex-direction:column;gap:16px;margin-top:6px}
+.aa-path-group{display:flex;flex-direction:column;gap:9px;align-items:flex-start;min-width:0}
+.aa-path-label{font-family:var(--serif);font-style:italic;font-size:13px;color:var(--accent);opacity:.85}
+.aa-path-group .aa-chip{position:relative;padding-left:26px;font-size:13px;line-height:1.4;width:100%}
+.aa-path-group .aa-chip::before{content:'';position:absolute;left:12px;top:18px;width:6px;height:6px;border-right:1.5px solid var(--dim2);border-bottom:1.5px solid var(--dim2);transform:rotate(-45deg)}
+.aa-path-group--new .aa-path-label{color:var(--dim)}
+
+/* Side by side once there's room for two columns of wrapped question text;
+   continue-path gets a bit more width since its questions tend to run longer. */
+@media (min-width:540px){
+  .aa-paths{flex-direction:row;align-items:flex-start;gap:20px}
+  .aa-path-group{flex:1 1 0}
+  .aa-path-group--continue{flex:1.15 1 0}
+}
+
 .aa-think-row{display:flex;gap:13px;align-items:flex-start}
 .aa-think-text{font-size:14px;color:var(--dim);font-style:italic;padding-top:2px;animation:aa-think-pulse 1.6s ease-in-out infinite}
 @keyframes aa-think-pulse{0%,100%{opacity:.5}50%{opacity:1}}
@@ -271,7 +286,8 @@ html,body{height:100%;margin:0;background:#0a1428}
     }
   }
 
-  // 2 follow-ups from the category the exchange was about, 1 from a different category.
+  // 2 follow-ups from the category the exchange was about, plus 2 alternate paths
+  // each drawn from a different other category (two genuinely different forks).
   function pickFollowups(userQuestion, answerText) {
     var combined = (userQuestion + ' ' + answerText).toLowerCase();
     var scores = CATEGORIES.map(function (cat) {
@@ -295,11 +311,12 @@ html,body{height:100%;margin:0;background:#0a1428}
       return q.toLowerCase() !== userQLower;
     })).slice(0, 2);
 
-    var otherCategories = CATEGORIES.filter(function (c) { return c.key !== current.key; });
-    var otherCategory = otherCategories[Math.floor(Math.random() * otherCategories.length)];
-    var otherPick = otherCategory.questions[Math.floor(Math.random() * otherCategory.questions.length)];
+    var otherCategories = shuffle(CATEGORIES.filter(function (c) { return c.key !== current.key; }));
+    var newPathPicks = otherCategories.slice(0, 2).map(function (cat) {
+      return cat.questions[Math.floor(Math.random() * cat.questions.length)];
+    });
 
-    return shuffle(sameCategoryPicks.concat([otherPick]));
+    return { continueDown: sameCategoryPicks, newPath: newPathPicks };
   }
 
   var state = {
@@ -435,14 +452,29 @@ html,body{height:100%;margin:0;background:#0a1428}
       for (var bi = state.messages.length - 1; bi >= 0; bi--) {
         if (state.messages[bi].role === 'bot') { lastBotMsg = state.messages[bi]; break; }
       }
-      if (lastBotMsg && lastBotMsg.followups && lastBotMsg.followups.length) {
-        var followupWrap = el('div', 'aa-chips');
-        lastBotMsg.followups.forEach(function (s) {
+      if (lastBotMsg && lastBotMsg.followups) {
+        var fu = lastBotMsg.followups;
+        var pathsWrap = el('div', 'aa-paths');
+
+        var continueGroup = el('div', 'aa-path-group aa-path-group--continue');
+        continueGroup.appendChild(el('div', 'aa-path-label', 'Continue down this path…'));
+        fu.continueDown.forEach(function (s) {
           var chip = el('button', 'aa-chip', s);
           chip.addEventListener('click', function () { send(s); });
-          followupWrap.appendChild(chip);
+          continueGroup.appendChild(chip);
         });
-        aaThread.appendChild(followupWrap);
+        pathsWrap.appendChild(continueGroup);
+
+        var newPathGroup = el('div', 'aa-path-group aa-path-group--new');
+        newPathGroup.appendChild(el('div', 'aa-path-label', 'Or, choose a new path…'));
+        fu.newPath.forEach(function (s) {
+          var chip = el('button', 'aa-chip', s);
+          chip.addEventListener('click', function () { send(s); });
+          newPathGroup.appendChild(chip);
+        });
+        pathsWrap.appendChild(newPathGroup);
+
+        aaThread.appendChild(pathsWrap);
       }
     }
 
@@ -452,14 +484,22 @@ html,body{height:100%;margin:0;background:#0a1428}
       trow.appendChild(el('div', 'aa-think-text', 'Thinking…'));
       aaThread.appendChild(trow);
     }
-
-    aaScroll.scrollTop = aaScroll.scrollHeight;
   }
 
   function render() {
     renderExpand();
     renderSend();
     renderThread();
+  }
+
+  // Scrolls so the current exchange's question lands at the top of the scroll
+  // view, with its answer starting right below — rather than snapping to the
+  // bottom past a long response, or anchoring on the answer alone with no
+  // visible context for what it's answering.
+  function scrollQuestionToTop() {
+    var rows = aaThread.querySelectorAll('.aa-row');
+    var row = rows[rows.length - 2] || rows[rows.length - 1];
+    if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
   async function send(raw) {
@@ -480,6 +520,7 @@ html,body{height:100%;margin:0;background:#0a1428}
 
     state.thinking = true;
     render();
+    scrollQuestionToTop();
     startThinkingPhrases();
 
     var bubbleEl = null;
@@ -552,6 +593,7 @@ html,body{height:100%;margin:0;background:#0a1428}
       }
       state.thinking = false;
       render();
+      scrollQuestionToTop();
     }
   }
 
