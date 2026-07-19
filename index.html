@@ -466,7 +466,7 @@ html,body{height:100%;margin:0;background:#0a1428}
         pathsWrap.appendChild(continueGroup);
 
         var newPathGroup = el('div', 'aa-path-group aa-path-group--new');
-        newPathGroup.appendChild(el('div', 'aa-path-label', 'Or, choose a new path…'));
+        newPathGroup.appendChild(el('div', 'aa-path-label', 'Or choose a new path…'));
         fu.newPath.forEach(function (s) {
           var chip = el('button', 'aa-chip', s);
           chip.addEventListener('click', function () { send(s); });
