@@ -276,7 +276,7 @@ html,body{height:100%;margin:0;background:#0a1428}
       idx++;
       if (idx >= queue.length) { queue = shuffle(THINKING_PHRASES); idx = 0; }
       apply();
-    }, 1900);
+    }, 2850);
   }
 
   function stopThinkingPhrases() {
@@ -323,6 +323,7 @@ html,body{height:100%;margin:0;background:#0a1428}
     expanded: false,
     started: false,
     thinking: false,
+    revealing: false,
     input: '',
     messages: [] // {role:'user'|'bot', text}
   };
@@ -416,7 +417,7 @@ html,body{height:100%;margin:0;background:#0a1428}
   }
 
   function renderSend() {
-    var active = state.input.trim().length > 0 && !state.thinking;
+    var active = state.input.trim().length > 0 && !state.thinking && !state.revealing;
     aaSend.classList.toggle('aa-send-active', active);
   }
 
@@ -502,9 +503,29 @@ html,body{height:100%;margin:0;background:#0a1428}
     if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
+  // The RAG backend buffers each answer and returns it in one or a few big
+  // bursts, not token-by-token — writing every delta straight to the DOM just
+  // slams a wall of text in. Instead we accumulate deltas into `target` and let
+  // a timer "type" it into the bubble at a constant rate, so the answer reads as
+  // if it's being written and a longer answer genuinely takes longer. Respects
+  // prefers-reduced-motion.
+  var REVEAL_TICK_MS = 50;
+  // Longest a reveal is allowed to run. Short answers type out at the constant
+  // base rate (a word or so per tick); only answers long enough to exceed this
+  // ceiling get sped up to fit inside it.
+  var REVEAL_MAX_MS = 10000;
+  var prefersReducedMotion = !!(window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  // Drop a dangling **bold** / *italic* marker off a partial slice so half-open
+  // emphasis doesn't flash literal asterisks while the text is still arriving.
+  function tidyPartial(s) {
+    return s.replace(/\*\*([^*]*)$/, '$1').replace(/(^|[^*])\*([^*]*)$/, '$1$2');
+  }
+
   async function send(raw) {
     var text = (typeof raw === 'string' ? raw : aaInput.value).trim();
-    if (!text || state.thinking) return;
+    if (!text || state.thinking || state.revealing) return;
 
     var FALLBACK_TEXT = "Sorry — I'm having trouble reaching the document archive right now. Give it a moment and try again.";
     var hadError = false;
@@ -525,6 +546,10 @@ html,body{height:100%;margin:0;background:#0a1428}
 
     var bubbleEl = null;
     var firstChunkSeen = false;
+    var target = '';       // full answer text received so far
+    var shownLen = 0;      // how much of it the reveal has painted in
+    var streamDone = false;
+    var revealTimer = null;
 
     function attachBubbleRefs() {
       var rows = aaThread.querySelectorAll('.aa-row');
@@ -533,13 +558,47 @@ html,body{height:100%;margin:0;background:#0a1428}
       bubbleEl = row.querySelector('.aa-bubble-bot');
     }
 
+    function paint() {
+      if (!bubbleEl) attachBubbleRefs();
+      botMsg.text = target.slice(0, shownLen);
+      if (bubbleEl) bubbleEl.innerHTML = mdToHtml(tidyPartial(botMsg.text));
+      aaScroll.scrollTop = aaScroll.scrollHeight;
+    }
+
+    function revealTick() {
+      if (shownLen < target.length) {
+        // Constant base rate (~3 chars/tick — roughly a word per tick once the
+        // whitespace snap below rounds it out). Only speeds up if the answer is
+        // long enough that the base rate would run past REVEAL_MAX_MS.
+        var step = Math.max(3, Math.ceil(target.length / (REVEAL_MAX_MS / REVEAL_TICK_MS)));
+        var end = Math.min(target.length, shownLen + step);
+        while (end < target.length && !/\s/.test(target.charAt(end))) end++;
+        shownLen = end;
+        paint();
+      } else if (streamDone) {
+        finishReveal();
+      }
+    }
+
+    function finishReveal() {
+      if (revealTimer) { clearInterval(revealTimer); revealTimer = null; }
+      state.revealing = false;
+      botMsg.text = target;
+      if (!hadError && target) botMsg.followups = pickFollowups(text, target);
+      render();
+      scrollQuestionToTop();
+    }
+
+    // First real chunk: clear the waiting state, then start the paced reveal.
     function handleFirstChunk() {
       if (firstChunkSeen) return;
       firstChunkSeen = true;
       stopThinkingPhrases();
       state.thinking = false;
+      state.revealing = true;
       render();
       attachBubbleRefs();
+      if (!prefersReducedMotion) revealTimer = setInterval(revealTick, REVEAL_TICK_MS);
     }
 
     try {
@@ -572,28 +631,36 @@ html,body{height:100%;margin:0;background:#0a1428}
 
           if (parsed.type === 'delta') {
             handleFirstChunk();
-            botMsg.text += parsed.text;
-            if (bubbleEl) bubbleEl.innerHTML = mdToHtml(botMsg.text);
-            aaScroll.scrollTop = aaScroll.scrollHeight;
+            target += parsed.text;
+            if (prefersReducedMotion) { shownLen = target.length; paint(); }
           } else if (parsed.type === 'error') {
-            handleFirstChunk();
             hadError = true;
-            botMsg.text = FALLBACK_TEXT;
-            if (bubbleEl) bubbleEl.innerHTML = mdToHtml(botMsg.text);
+            console.error('[ask] stream error:', parsed.error);
           }
         }
       }
     } catch (err) {
       hadError = true;
-      botMsg.text = FALLBACK_TEXT;
+      console.error('[ask] request failed:', err);
     } finally {
-      stopThinkingPhrases();
-      if (!hadError && botMsg.text) {
-        botMsg.followups = pickFollowups(text, botMsg.text);
+      streamDone = true;
+
+      if (!firstChunkSeen) {
+        // No text ever arrived — show the fallback with no reveal.
+        stopThinkingPhrases();
+        state.thinking = false;
+        state.revealing = false;
+        botMsg.text = target || FALLBACK_TEXT;
+        render();
+        scrollQuestionToTop();
+      } else {
+        if (hadError && !target) target = FALLBACK_TEXT;
+        // Close out now if the reveal has already caught up (or is disabled);
+        // otherwise revealTick() finishes when it reaches the end.
+        if (prefersReducedMotion || !revealTimer || shownLen >= target.length) {
+          finishReveal();
+        }
       }
-      state.thinking = false;
-      render();
-      scrollQuestionToTop();
     }
   }
 
